@@ -1,19 +1,12 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/highgui.hpp> 
-// #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/videoio.hpp>
 
 #include <experimental/filesystem>
-// #include <boost/range/iterator_range.hpp>
-// #include <boost/algorithm/string.hpp> // to_upper, to_lower, split
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
-// #include <array>
-// #include <map>
-// #include <fstream> // read file streams
-// #include <sstream> // read string stream from file
 
 #include "args.hxx"
 #include "SSIM.hpp"
@@ -22,15 +15,29 @@ using namespace std;
 using namespace cv;
 namespace fs = std::experimental::filesystem;
 
-string CUR_FRAME_WINNAME = "Current Frame";
+string const CUR_FRAME_WINNAME = "Current Frame";
+int const RSZ_WIDTH = 640;
+int const RSZ_HEIGHT = 480;
 
 bool read_resized(VideoCapture &cap, Mat &full_size, Mat &dest_img)
 {
     if(!cap.read(full_size))
 	return false;
-    cv::resize(full_size, dest_img, cv::Size(640, 480), 0, 0, cv::INTER_AREA);
+    cv::resize(full_size, dest_img, cv::Size(RSZ_WIDTH, RSZ_HEIGHT), 0, 0, cv::INTER_AREA);
     return true;
 }
+
+string millis_to_timestamp(long millis)
+{
+    int seconds = (millis/1000) % 60;
+    int minutes = (millis/(1000*60))%60;
+    int hours = (millis/(1000*60*60)) % 24;
+    std::ostringstream stringStream;
+    stringStream << hours << ":" << minutes << ":" << seconds << flush;
+    std::string copyOfStr = stringStream.str();
+    return copyOfStr;
+}
+
 
 int main(int argc, char *argv[])
 {
@@ -64,6 +71,7 @@ int main(int argc, char *argv[])
 
     fs::path outPath = fs::path(args::get(pOutDirPath));
     fs::path videoPath = fs::path(args::get(pVideoPath));
+    fs::path refImagesDirPath = fs::path(args::get(pReferenceDirPath));
 
     if(!fs::exists(videoPath))
     {
@@ -78,6 +86,36 @@ int main(int argc, char *argv[])
 		  << "' is not a file" << endl;
 	return -1;
     }
+
+    if(!fs::exists(refImagesDirPath))
+    {
+	std::cerr << "ERROR, reference images directory '"
+		  << refImagesDirPath.string()
+		  << "' does not exist" << endl;
+	return -1;
+    } else if(!fs::is_directory(refImagesDirPath))
+    {
+	std::cerr << "ERROR, path '"
+		  << refImagesDirPath.string()
+		  << "' is not a directory" << endl;
+	return -1;
+    }
+
+    // copy all paths to a vector and sort them
+    cout << "Reading reference images and resizing..." << endl;
+    typedef vector<fs::path> pvec;
+    pvec all_paths;
+    copy(fs::directory_iterator(refImagesDirPath), fs::directory_iterator(), back_inserter(all_paths));
+    sort(all_paths.begin(), all_paths.end());
+    fs::path fpath;
+    vector<Mat> refImages(all_paths.size());
+    for (int i = 0; i < all_paths.size(); i++) {
+	cout << "Reference Image " << i << " (" << all_paths[i].filename() << ")\r" << flush;
+	fpath = all_paths[i];
+	Mat full_size = cv::imread(fpath.string()); 
+	cv::resize(full_size, refImages[i], cv::Size(RSZ_WIDTH, RSZ_HEIGHT), 0, 0, cv::INTER_AREA);
+    }
+    cout << string(120, ' ') << '\r' << flush;
     
     VideoCapture cap;
     cap.open(videoPath.string());
@@ -94,33 +132,45 @@ int main(int argc, char *argv[])
 	cout << "Couldn't get frame count from metadata..." << endl;
     }
     
-    Mat full_frame, frame0, frame1;
+    Mat full_frame, cur_frame;
     cv::namedWindow(CUR_FRAME_WINNAME, cv::WINDOW_NORMAL);
     resizeWindow(CUR_FRAME_WINNAME, 640, 480);
 
-    // cap.read(frame0);
-    read_resized(cap, full_frame, frame0);
-    read_resized(cap, full_frame, frame1);
-    // waitKey(5000);
-    cv::imshow("Current Frame", frame0);
-    waitKey(1000);
-
-    long cur_frame_num = 1;
+    cout << "Started to process video." << endl;
+    read_resized(cap, full_frame, cur_frame);
+    cv::imshow("Current Frame", cur_frame);
+    waitKey(500);
     do {
-	VQMT::SSIM comparator = VQMT::SSIM(frame0.cols, frame0.rows);
-	float diff = comparator.compute(frame0, frame1);
-	if((cur_frame_num % 100) == 0) {
-	    cout << "frame " << cur_frame_num << "\r" << flush;
-	    cv::imshow("Current Frame", frame1);
-	    waitKey(1000);
+	VQMT::SSIM comparator = VQMT::SSIM(cur_frame.cols, cur_frame.rows);
+	bool has_foreground;
+	float ssim;
+	int back_img_index;
+	for(int i = 0; i < refImages.size(); i++) {
+	    ssim = comparator.compute(refImages[i], cur_frame);
+	    if(ssim < 1) {
+		has_foreground = true;
+		back_img_index = i;
+		break;
+	    }
 	}
-	if(diff < 1) {
-	    cv::imshow("Current Frame", frame1);
-	    cout << "diff: " << 1-diff << endl;
-	    waitKey();
+	if(((long) cap.get(cv::CAP_PROP_POS_FRAMES) % 10) == 0) {
+	    cout << "frame " << cap.get(cv::CAP_PROP_POS_FRAMES)
+		 << " (" << millis_to_timestamp(cap.get(cv::CAP_PROP_POS_MSEC)) << ")"
+		 << "\r" << flush;
+	    // TODO change to show image only with verbose option, as waitKey makes the code slower
+	    if(false) {
+		cv::imshow("Current Frame", cur_frame);
+		waitKey(100);
+	    }
 	}
-	frame1.copyTo(frame0);
-	cur_frame_num++;
-    } while(read_resized(cap, full_frame, frame1));
+	if(has_foreground) {
+	    cv::imshow("Current Frame", cur_frame);
+	    cout << "diff (1-ssmi): " << 1-ssim << endl;
+	    cout << "frame " << cap.get(cv::CAP_PROP_POS_FRAMES)
+		 << " (" << millis_to_timestamp(cap.get(cv::CAP_PROP_POS_MSEC)) << "ms)"
+		 << endl;
+	    waitKey(500);
+	}
+    } while(read_resized(cap, full_frame, cur_frame));
     return 0;
 }
