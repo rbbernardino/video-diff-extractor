@@ -1,6 +1,7 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/highgui.hpp> 
 #include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/videoio.hpp>
 
 #include <experimental/filesystem>
 #include <boost/range/iterator_range.hpp>
@@ -46,10 +47,40 @@ int main(int argc, char *argv[])
     }
 
     if(!pVideoPath || !pReferenceDirPath || !pOutDirPath) {
-	cout << parser;
+	std::cout << parser;
 	return 1;
     }
 
     fs::path outPath = fs::path(args::get(pOutDirPath));
+    fs::path videoPath = fs::path(args::get(pVideoPath));
+
+    if(!fs::exists(videoPath))
+    {
+	std::cerr << "ERROR, video file '"
+		  << videoPath.string()
+		  << "' does not exist" << endl;
+	return -1;
+    } else if(!fs::is_regular_file(videoPath) && !fs::is_symlink(videoPath))
+    {
+	std::cerr << "ERROR, path '"
+		  << videoPath.string()
+		  << "' is not a file" << endl;
+	return -1;
+    }
+    
+    VideoCapture cap;
+    cap.open(videoPath.string());
+    if(!cap.isOpened())
+    {
+	cerr << "ERROR! Unable to open file." << endl;
+	return -1;
+    }
+
+    Mat frame;
+    cv::namedWindow("teste", cv::WINDOW_NORMAL);
+    while(cap.read(frame)) {
+    	cv::imshow("teste", frame);
+	waitKey();
+    }
     return 0;
 }
