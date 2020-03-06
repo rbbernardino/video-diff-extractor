@@ -33,8 +33,15 @@ namespace VQMT
 {
     class Metric {
     public:
-	Metric(int height, int width);
-	virtual ~Metric();
+	Metric(int h, int w)
+	    {
+		height = h;
+		width = w;
+	    }
+
+	virtual ~Metric()
+	    {
+	    }
 	virtual float compute(const cv::Mat& original, const cv::Mat& processed) = 0;
     protected:
 	int height;
@@ -42,7 +49,14 @@ namespace VQMT
 	// Smoothing using a Gaussian kernel of size ksize with standard deviation sigma
 	// Returns only those parts of the correlation that are computed without zero-padded edges
 	// (similarly to 'filter2' in Matlab with option 'valid')
-	void applyGaussianBlur(const cv::Mat& src, cv::Mat& dst, int ksize, double sigma);
+	void applyGaussianBlur(const cv::Mat& src, cv::Mat& dst, int ksize, double sigma)
+	    {
+		int invalid = (ksize-1)/2;
+		cv::Mat tmp(src.rows, src.cols, CV_32F);
+		cv::GaussianBlur(src, tmp, cv::Size(ksize,ksize), sigma);
+		tmp(cv::Range(invalid, tmp.rows-invalid), cv::Range(invalid, tmp.cols-invalid)).copyTo(dst);
+	    }
+
     };
 }
 #endif

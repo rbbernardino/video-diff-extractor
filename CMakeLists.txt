@@ -13,7 +13,7 @@ add_definitions(-std=c++14)
 find_package( OpenCV REQUIRED )
 FIND_PACKAGE( Boost COMPONENTS system REQUIRED )
 
-include_directories("lib" "src")
+include_directories("lib" "lib/VQMT" "src")
 
 # set( HEADERS src/main.hpp )
 set( SOURCES src/main.cpp )
