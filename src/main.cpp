@@ -10,6 +10,7 @@
 
 #include "args.hxx"
 #include "SSIM.hpp"
+#include "eta.hpp"
 
 using namespace std;
 using namespace cv;
@@ -18,7 +19,8 @@ namespace fs = std::experimental::filesystem;
 string const CUR_FRAME_WINNAME = "Current Frame";
 int const RSZ_WIDTH = 640;
 int const RSZ_HEIGHT = 480;
-float DIFF_SCORE_THRESH = 0.97;
+float DEFAULT_SIM_THRESH = 0.97;
+int DEFAULT_UPDATE_PROGRESS_RATE = 100;
 string OUT_EXT = ".png";
 
 bool read_resized(VideoCapture &cap, Mat &full_size, Mat &dest_img)
@@ -35,7 +37,9 @@ string millis_to_timestamp(long millis)
     int minutes = (millis/(1000*60))%60;
     int hours = (millis/(1000*60*60)) % 24;
     std::ostringstream stringStream;
-    stringStream << hours << ":" << minutes << ":" << seconds << flush;
+    stringStream << std::setfill('0') << std::setw(2) << hours << ":"
+		 << std::setfill('0') << std::setw(2) << minutes << ":"
+		 << std::setfill('0') << std::setw(2) << seconds << flush;
     std::string copyOfStr = stringStream.str();
     return copyOfStr;
 }
@@ -65,7 +69,13 @@ int main(int argc, char *argv[])
     args::ValueFlag<std::string> pVideoPath(parser, "video", "The input video file", {'v'});
     args::ValueFlag<std::string> pReferenceDirPath(parser, "directory", "The reference images dir path", {'r'});
     args::ValueFlag<std::string> pOutDirPath(parser, "directory", "The output directory path", {'o'});
-
+    args::ValueFlag<int> pStartFrame(parser, "start_frame", "Ignores all frames before the specified one", {'s'});
+    args::ValueFlag<int> pEndFrame(parser, "end_frame", "Ignores all frames after the specified one", {'e'});
+    args::ValueFlag<float> pSimThresh(parser, "sim_thresh", "Similarity threshold", {'t'});
+    args::ValueFlag<int> pUpdateProgressRate(parser, "N", "Show progress every N frames", {'u'});
+    args::Flag pVerbose(parser, "verbose", "Show image if found object only", {'v'});
+    args::Flag pVerbose2(parser, "verbose", "Show EVERY image being processed", {"verbose2"});
+    
     try {
 	parser.ParseCLI(argc, argv);
     }
@@ -90,6 +100,24 @@ int main(int argc, char *argv[])
     fs::path videoPath = fs::path(args::get(pVideoPath));
     fs::path refImagesDirPath = fs::path(args::get(pReferenceDirPath));
 
+    long startFrame = 1;
+    if(pStartFrame)
+	startFrame = args::get(pStartFrame);
+
+    long endFrame;
+    if(pEndFrame)
+	endFrame = args::get(pEndFrame);
+
+    int updateProgressRate;
+    if(pUpdateProgressRate)
+	updateProgressRate = args::get(pUpdateProgressRate);
+    else
+	updateProgressRate = DEFAULT_UPDATE_PROGRESS_RATE;
+    
+    float simThresh = DEFAULT_SIM_THRESH;
+    if(pSimThresh)
+	simThresh = args::get(pSimThresh);
+    
     if(!fs::exists(videoPath))
     {
 	std::cerr << "ERROR, video file '"
@@ -118,6 +146,9 @@ int main(int argc, char *argv[])
 	return -1;
     }
 
+    if(!fs::exists(outPath))
+	fs::create_directories(outPath);
+
     // copy all paths to a vector and sort them
     cout << "Reading reference images and resizing..." << endl;
     typedef vector<fs::path> pvec;
@@ -144,24 +175,42 @@ int main(int argc, char *argv[])
 
     long frame_count = cap.get(cv::CAP_PROP_FRAME_COUNT);
     if(frame_count > 0) {
-	cout << "Frame count: " << frame_count << endl;
+	cout << "Frame count: " << frame_count << endl << endl;
     } else {
 	cout << "Couldn't get frame count from metadata..." << endl;
     }
+    if(!pEndFrame) {
+	endFrame = frame_count;
+    } else {
+	if(endFrame < startFrame)
+	    exit(0);
+    }
+    
+    if(pStartFrame && startFrame > 1) {
+	cout << "Skipping " << startFrame - 1 << " frames..." << endl;
+	for(long i = 1; i < startFrame; i++)
+	    cap.grab();
+    }
     
     Mat full_frame, cur_frame;
-    cv::namedWindow(CUR_FRAME_WINNAME, cv::WINDOW_NORMAL);
-    resizeWindow(CUR_FRAME_WINNAME, 640, 480);
+
+    if(pVerbose || pVerbose2) {
+	cv::namedWindow(CUR_FRAME_WINNAME, cv::WINDOW_NORMAL);
+	resizeWindow(CUR_FRAME_WINNAME, 640, 480);
+    }
 
     cout << "Started to process video." << endl;
     read_resized(cap, full_frame, cur_frame);
-    cv::imshow(CUR_FRAME_WINNAME, cur_frame);
-    waitKey(500);
+    if(pVerbose || pVerbose2)
+	cv::imshow(CUR_FRAME_WINNAME, cur_frame);
+    waitKey(100);
+    EtaEstimator eta(endFrame - startFrame + 1);
+    long cur_frame_number;
     do {
 	bool has_foreground = true;
 	int back_img_index;
-	float diff_score;
-	long cur_frame_number = cap.get(cv::CAP_PROP_POS_FRAMES);
+	float diff_score, max_score = 0.0;
+	cur_frame_number = cap.get(cv::CAP_PROP_POS_FRAMES);
 	for(int i = 0; i < refImages.size(); i++) {
 	    // the strategy is to compare the input frame with each
 	    // background reference frame. If any of the background
@@ -170,40 +219,51 @@ int main(int argc, char *argv[])
 	    // -------------
 	    // this is necessary because the background varies along time
 	    diff_score = compareImages(refImages[i], cur_frame);
-	    if(diff_score >= DIFF_SCORE_THRESH) {
-		has_foreground = false;
+	    if(diff_score >= max_score) {
+		max_score = diff_score;
 		back_img_index = i;
+	    }
+	    if(diff_score >= simThresh) {
+		has_foreground = false;
 		break;
 	    }
 	}
 
-	if((cur_frame_number % 10) == 0) {
-	    cout << "frame " << cur_frame_number
-		 << " (" << millis_to_timestamp(cap.get(cv::CAP_PROP_POS_MSEC)) << ")"
-		 << endl;
-	    // TODO change to show image only with verbose option, as waitKey makes the code slower
-	    if(false) {
-		cv::imshow(CUR_FRAME_WINNAME, cur_frame);
-		waitKey(100);
-	    }
-	}
 	if(has_foreground) {
-	    cv::imshow(CUR_FRAME_WINNAME, cur_frame);
+	    if(pVerbose || pVerbose2) {
+		cv::imshow(CUR_FRAME_WINNAME, cur_frame);
+	    }
 	    string timestamp = millis_to_timestamp(cap.get(cv::CAP_PROP_POS_MSEC));
-	    cout << "Found Object! diff: " << 100 * (1 - diff_score) << "%" << endl;
-	    cout << "frame " << cur_frame_number << " (" << timestamp << "ms)" << endl;
+	    cout << "Object detected! | max_sim=" << fixed << setprecision(4) << max_score
+		 << " | " << "frame " << cur_frame_number << " (" << timestamp << ")"
+		 << " | " << "ETA " << eta
+		 << endl;
 	    std::ostringstream stringStream;
 	    stringStream << videoPath.stem().string()
 			 << "_f" << cur_frame_number
 			 << "-t" << timestamp
-			 << "-d" << diff_score
+			 << "-ms" << max_score
 			 << OUT_EXT
 			 << flush;
 	    std::string outName = stringStream.str();
-	    cout << "Writing to " << outName << endl;
+	    // cout << "Writing to " << outName << endl;
 	    cv::imwrite((outPath / outName).string(), cur_frame);
-	    waitKey(500);
+	    // waitKey(100);
+	} else if((cur_frame_number % updateProgressRate) == 0) {
+	    cout << "frame " << cur_frame_number
+		 << " (" << millis_to_timestamp(cap.get(cv::CAP_PROP_POS_MSEC)) << ")"
+		 << " | " << "max sim = " << max_score
+		 << " | " << "ETA " << eta
+		 << endl;
+	    if(pVerbose || pVerbose2) {
+		cv::imshow(CUR_FRAME_WINNAME, cur_frame);
+		waitKey(100);
+	    }
+	} else if(pVerbose2) {
+		cv::imshow(CUR_FRAME_WINNAME, cur_frame);
+		waitKey(100);
 	}
-    } while(read_resized(cap, full_frame, cur_frame));
+	eta.update();
+    } while((cur_frame_number < endFrame) && read_resized(cap, full_frame, cur_frame));
     return 0;
 }
