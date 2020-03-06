@@ -18,6 +18,8 @@ namespace fs = std::experimental::filesystem;
 string const CUR_FRAME_WINNAME = "Current Frame";
 int const RSZ_WIDTH = 640;
 int const RSZ_HEIGHT = 480;
+float DIFF_SCORE_THRESH = 0.97;
+string OUT_EXT = ".png";
 
 bool read_resized(VideoCapture &cap, Mat &full_size, Mat &dest_img)
 {
@@ -38,9 +40,24 @@ string millis_to_timestamp(long millis)
     return copyOfStr;
 }
 
+float compareImages(Mat &imgA, Mat &imgB)
+{
+    Mat scoreImage;
+    double maxScore;
+    cv::matchTemplate(imgA, imgB, scoreImage, TM_CCOEFF_NORMED);
+    minMaxLoc(scoreImage, 0, &maxScore);
+    return maxScore;
+    // VQMT::SSIM comparator = VQMT::SSIM(1280, 720);
+    // float ssim = comparator.compute(a, b);
+    // cout<< ssim << endl;
+}
 
 int main(int argc, char *argv[])
 {
+    // Mat a = cv::imread(argv[1], IMREAD_COLOR);
+    // Mat b = cv::imread(argv[2], IMREAD_COLOR);
+    // cout << "score " << compareImages(a, b) << endl;
+    // exit(0);
     args::ArgumentParser parser("A tool for extracting frames from a video file "
 				"that differs from some reference frames. The "
 				"difference is calculated with a configurable threshold.");
@@ -138,37 +155,53 @@ int main(int argc, char *argv[])
 
     cout << "Started to process video." << endl;
     read_resized(cap, full_frame, cur_frame);
-    cv::imshow("Current Frame", cur_frame);
+    cv::imshow(CUR_FRAME_WINNAME, cur_frame);
     waitKey(500);
     do {
-	VQMT::SSIM comparator = VQMT::SSIM(cur_frame.cols, cur_frame.rows);
-	bool has_foreground;
-	float ssim;
+	bool has_foreground = true;
 	int back_img_index;
+	float diff_score;
+	long cur_frame_number = cap.get(cv::CAP_PROP_POS_FRAMES);
 	for(int i = 0; i < refImages.size(); i++) {
-	    ssim = comparator.compute(refImages[i], cur_frame);
-	    if(ssim < 1) {
-		has_foreground = true;
+	    // the strategy is to compare the input frame with each
+	    // background reference frame. If any of the background
+	    // frames is nearly equal to the input frame, than there
+	    // is no foreground.
+	    // -------------
+	    // this is necessary because the background varies along time
+	    diff_score = compareImages(refImages[i], cur_frame);
+	    if(diff_score >= DIFF_SCORE_THRESH) {
+		has_foreground = false;
 		back_img_index = i;
 		break;
 	    }
 	}
-	if(((long) cap.get(cv::CAP_PROP_POS_FRAMES) % 10) == 0) {
-	    cout << "frame " << cap.get(cv::CAP_PROP_POS_FRAMES)
+
+	if((cur_frame_number % 10) == 0) {
+	    cout << "frame " << cur_frame_number
 		 << " (" << millis_to_timestamp(cap.get(cv::CAP_PROP_POS_MSEC)) << ")"
-		 << "\r" << flush;
+		 << endl;
 	    // TODO change to show image only with verbose option, as waitKey makes the code slower
 	    if(false) {
-		cv::imshow("Current Frame", cur_frame);
+		cv::imshow(CUR_FRAME_WINNAME, cur_frame);
 		waitKey(100);
 	    }
 	}
 	if(has_foreground) {
-	    cv::imshow("Current Frame", cur_frame);
-	    cout << "diff (1-ssmi): " << 1-ssim << endl;
-	    cout << "frame " << cap.get(cv::CAP_PROP_POS_FRAMES)
-		 << " (" << millis_to_timestamp(cap.get(cv::CAP_PROP_POS_MSEC)) << "ms)"
-		 << endl;
+	    cv::imshow(CUR_FRAME_WINNAME, cur_frame);
+	    string timestamp = millis_to_timestamp(cap.get(cv::CAP_PROP_POS_MSEC));
+	    cout << "Found Object! diff: " << 100 * (1 - diff_score) << "%" << endl;
+	    cout << "frame " << cur_frame_number << " (" << timestamp << "ms)" << endl;
+	    std::ostringstream stringStream;
+	    stringStream << videoPath.stem().string()
+			 << "_f" << cur_frame_number
+			 << "-t" << timestamp
+			 << "-d" << diff_score
+			 << OUT_EXT
+			 << flush;
+	    std::string outName = stringStream.str();
+	    cout << "Writing to " << outName << endl;
+	    cv::imwrite((outPath / outName).string(), cur_frame);
 	    waitKey(500);
 	}
     } while(read_resized(cap, full_frame, cur_frame));
