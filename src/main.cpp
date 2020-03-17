@@ -66,7 +66,7 @@ int main(int argc, char *argv[])
 				"that differs from some reference frames. The "
 				"difference is calculated with a configurable threshold.");
     args::HelpFlag help(parser, "help", "Display this help menu", {'h', "help"});
-    args::ValueFlag<std::string> pVideoPath(parser, "video", "The input video file", {'v'});
+    args::ValueFlag<std::string> pVideoPath(parser, "video", "The input video file", {'i'});
     args::ValueFlag<std::string> pReferenceDirPath(parser, "directory", "The reference images dir path", {'r'});
     args::ValueFlag<std::string> pOutDirPath(parser, "directory", "The output directory path", {'o'});
     args::ValueFlag<int> pStartFrame(parser, "start_frame", "Ignores all frames before the specified one", {'s'});
@@ -185,11 +185,21 @@ int main(int argc, char *argv[])
 	if(endFrame < startFrame)
 	    exit(0);
     }
-    
+
     if(pStartFrame && startFrame > 1) {
 	cout << "Skipping " << startFrame - 1 << " frames..." << endl;
-	for(long i = 1; i < startFrame; i++)
+	EtaEstimator eta(startFrame);
+	cout << "frame " << 1;
+	for(long i = 1; i < startFrame; i++) {
+	    if((i % 300) == 0) {
+		// cout << string(120, ' ') << "\r" << flush;
+		cout << "frame " << i;
+		cout << " | ETA " << eta << "          " <<  "\r" << flush;
+	    }
 	    cap.grab();
+	    eta.update();
+	}
+	cout << string(120, ' ') << "\r" << flush;
     }
     
     Mat full_frame, cur_frame;
@@ -242,7 +252,7 @@ int main(int argc, char *argv[])
 	    stringStream << videoPath.stem().string()
 			 << "_f" << cur_frame_number
 			 << "-t" << timestamp
-			 << "-ms" << max_score
+			 << "-ms" << fixed << setprecision(4) << max_score
 			 << OUT_EXT
 			 << flush;
 	    std::string outName = stringStream.str();
@@ -250,7 +260,7 @@ int main(int argc, char *argv[])
 	    cv::imwrite((outPath / outName).string(), cur_frame);
 	    // waitKey(100);
 	} else if((cur_frame_number % updateProgressRate) == 0) {
-	    cout << "frame " << cur_frame_number
+	    cout << "frame " << std::setfill('0') << std::setw(6) << cur_frame_number
 		 << " (" << millis_to_timestamp(cap.get(cv::CAP_PROP_POS_MSEC)) << ")"
 		 << " | " << "max sim = " << max_score
 		 << " | " << "ETA " << eta
