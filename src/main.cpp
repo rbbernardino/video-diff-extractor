@@ -66,7 +66,7 @@ int main(int argc, char *argv[])
 				"that differs from some reference frames. The "
 				"difference is calculated with a configurable threshold.");
     args::HelpFlag help(parser, "help", "Display this help menu", {'h', "help"});
-    args::ValueFlag<std::string> pVideoPath(parser, "video", "The input video file", {'i'});
+    args::ValueFlag<std::string> pInputPath(parser, "videoOrDirecao", "The input video file OR directory", {'i'});
     args::ValueFlag<std::string> pReferenceDirPath(parser, "directory", "The reference images dir path", {'r'});
     args::ValueFlag<std::string> pOutDirPath(parser, "directory", "The output directory path", {'o'});
     args::ValueFlag<int> pStartFrame(parser, "start_frame", "Ignores all frames before the specified one", {'s'});
@@ -77,78 +77,78 @@ int main(int argc, char *argv[])
     args::Flag pVerbose2(parser, "verbose", "Show EVERY image being processed", {"verbose2"});
     
     try {
-	parser.ParseCLI(argc, argv);
+        parser.ParseCLI(argc, argv);
     }
     catch (args::Help)
     {
-	std::cout << parser;
-	return 0;
+        std::cout << parser;
+        return 0;
     }
     catch (args::ParseError e)
     {
-	std::cerr << e.what() << std::endl;
-	std::cerr << parser;
-	return 1;
+        std::cerr << e.what() << std::endl;
+        std::cerr << parser;
+        return 1;
     }
 
-    if(!pVideoPath || !pReferenceDirPath || !pOutDirPath) {
-	std::cout << parser;
-	return 1;
+    if(!pInputPath || !pReferenceDirPath || !pOutDirPath) {
+        std::cout << parser;
+        return 1;
     }
 
     fs::path outPath = fs::path(args::get(pOutDirPath));
-    fs::path videoPath = fs::path(args::get(pVideoPath));
+    fs::path inputPath = fs::path(args::get(pInputPath));
     fs::path refImagesDirPath = fs::path(args::get(pReferenceDirPath));
 
     long startFrame = 1;
     if(pStartFrame)
-	startFrame = args::get(pStartFrame);
+        startFrame = args::get(pStartFrame);
 
     long endFrame;
     if(pEndFrame)
-	endFrame = args::get(pEndFrame);
+        endFrame = args::get(pEndFrame);
 
     int updateProgressRate;
     if(pUpdateProgressRate)
-	updateProgressRate = args::get(pUpdateProgressRate);
+        updateProgressRate = args::get(pUpdateProgressRate);
     else
-	updateProgressRate = DEFAULT_UPDATE_PROGRESS_RATE;
+        updateProgressRate = DEFAULT_UPDATE_PROGRESS_RATE;
     
     float simThresh = DEFAULT_SIM_THRESH;
     if(pSimThresh)
-	simThresh = args::get(pSimThresh);
+        simThresh = args::get(pSimThresh);
     
-    if(!fs::exists(videoPath))
+    if(!fs::exists(inputPath))
     {
-	std::cerr << "ERROR, video file '"
-		  << videoPath.string()
-		  << "' does not exist" << endl;
-	return -1;
-    } else if(!fs::is_regular_file(videoPath) && !fs::is_symlink(videoPath))
+        std::cerr << "ERROR, video file '"
+                  << inputPath.string()
+                  << "' does not exist" << endl;
+        return -1;
+    } else if(!fs::is_regular_file(inputPath) && !fs::is_symlink(inputPath))
     {
-	std::cerr << "ERROR, path '"
-		  << videoPath.string()
-		  << "' is not a file" << endl;
-	return -1;
+        std::cerr << "ERROR, path '"
+                  << inputPath.string()
+                  << "' is not a file" << endl;
+        return -1;
     }
-
+    
     if(!fs::exists(refImagesDirPath))
     {
-	std::cerr << "ERROR, reference images directory '"
-		  << refImagesDirPath.string()
-		  << "' does not exist" << endl;
-	return -1;
+        std::cerr << "ERROR, reference images directory '"
+                  << refImagesDirPath.string()
+                  << "' does not exist" << endl;
+        return -1;
     } else if(!fs::is_directory(refImagesDirPath))
     {
-	std::cerr << "ERROR, path '"
-		  << refImagesDirPath.string()
-		  << "' is not a directory" << endl;
-	return -1;
+        std::cerr << "ERROR, path '"
+                  << refImagesDirPath.string()
+                  << "' is not a directory" << endl;
+        return -1;
     }
-
+    
     if(!fs::exists(outPath))
-	fs::create_directories(outPath);
-
+        fs::create_directories(outPath);
+    
     // copy all paths to a vector and sort them
     cout << "Reading reference images and resizing..." << endl;
     typedef vector<fs::path> pvec;
@@ -158,122 +158,122 @@ int main(int argc, char *argv[])
     fs::path fpath;
     vector<Mat> refImages(all_paths.size());
     for (int i = 0; i < all_paths.size(); i++) {
-	cout << "Reference Image " << i << " (" << all_paths[i].filename() << ")\r" << flush;
-	fpath = all_paths[i];
-	Mat full_size = cv::imread(fpath.string()); 
-	cv::resize(full_size, refImages[i], cv::Size(RSZ_WIDTH, RSZ_HEIGHT), 0, 0, cv::INTER_AREA);
+        cout << "Reference Image " << i << " (" << all_paths[i].filename() << ")\r" << flush;
+        fpath = all_paths[i];
+        Mat full_size = cv::imread(fpath.string()); 
+        cv::resize(full_size, refImages[i], cv::Size(RSZ_WIDTH, RSZ_HEIGHT), 0, 0, cv::INTER_AREA);
     }
     cout << string(120, ' ') << '\r' << flush;
     
     VideoCapture cap;
-    cap.open(videoPath.string());
+    cap.open(inputPath.string());
     if(!cap.isOpened())
     {
-	cerr << "ERROR! Unable to open file." << endl;
-	return -1;
+        cerr << "ERROR! Unable to open file." << endl;
+        return -1;
     }
 
     long frame_count = cap.get(cv::CAP_PROP_FRAME_COUNT);
     if(frame_count > 0) {
-	cout << "Frame count: " << frame_count << endl << endl;
+        cout << "Frame count: " << frame_count << endl << endl;
     } else {
-	cout << "Couldn't get frame count from metadata..." << endl;
+        cout << "Couldn't get frame count from metadata..." << endl;
     }
     if(!pEndFrame) {
-	endFrame = frame_count;
+        endFrame = frame_count;
     } else {
-	if(endFrame < startFrame)
-	    exit(0);
+        if(endFrame < startFrame)
+            exit(0);
     }
 
     if(pStartFrame && startFrame > 1) {
-	cout << "Skipping " << startFrame - 1 << " frames..." << endl;
-	EtaEstimator eta(startFrame);
-	cout << "frame " << 1;
-	for(long i = 1; i < startFrame; i++) {
-	    if((i % 300) == 0) {
-		// cout << string(120, ' ') << "\r" << flush;
-		cout << "frame " << i;
-		cout << " | ETA " << eta << "          " <<  "\r" << flush;
-	    }
-	    cap.grab();
-	    eta.update();
-	}
-	cout << string(120, ' ') << "\r" << flush;
+        cout << "Skipping " << startFrame - 1 << " frames..." << endl;
+        EtaEstimator eta(startFrame);
+        cout << "frame " << 1;
+        for(long i = 1; i < startFrame; i++) {
+            if((i % 300) == 0) {
+                // cout << string(120, ' ') << "\r" << flush;
+                cout << "frame " << i;
+                cout << " | ETA " << eta << "          " <<  "\r" << flush;
+            }
+            cap.grab();
+            eta.update();
+        }
+        cout << string(120, ' ') << "\r" << flush;
     }
     
     Mat full_frame, cur_frame;
 
     if(pVerbose || pVerbose2) {
-	cv::namedWindow(CUR_FRAME_WINNAME, cv::WINDOW_NORMAL);
-	resizeWindow(CUR_FRAME_WINNAME, 640, 480);
+        cv::namedWindow(CUR_FRAME_WINNAME, cv::WINDOW_NORMAL);
+        resizeWindow(CUR_FRAME_WINNAME, 640, 480);
     }
 
     cout << "Started to process video." << endl;
     read_resized(cap, full_frame, cur_frame);
     if(pVerbose || pVerbose2)
-	cv::imshow(CUR_FRAME_WINNAME, cur_frame);
+        cv::imshow(CUR_FRAME_WINNAME, cur_frame);
     waitKey(100);
     EtaEstimator eta(endFrame - startFrame + 1);
     long cur_frame_number;
     do {
-	bool has_foreground = true;
-	int back_img_index;
-	float diff_score, max_score = 0.0;
-	cur_frame_number = cap.get(cv::CAP_PROP_POS_FRAMES);
-	for(int i = 0; i < refImages.size(); i++) {
-	    // the strategy is to compare the input frame with each
-	    // background reference frame. If any of the background
-	    // frames is nearly equal to the input frame, than there
-	    // is no foreground.
-	    // -------------
-	    // this is necessary because the background varies along time
-	    diff_score = compareImages(refImages[i], cur_frame);
-	    if(diff_score >= max_score) {
-		max_score = diff_score;
-		back_img_index = i;
-	    }
-	    if(diff_score >= simThresh) {
-		has_foreground = false;
-		break;
-	    }
-	}
+        bool has_foreground = true;
+        int back_img_index;
+        float diff_score, max_score = 0.0;
+        cur_frame_number = cap.get(cv::CAP_PROP_POS_FRAMES);
+        for(int i = 0; i < refImages.size(); i++) {
+            // the strategy is to compare the input frame with each
+            // background reference frame. If any of the background
+            // frames is nearly equal to the input frame, than there
+            // is no foreground.
+            // -------------
+            // this is necessary because the background varies along time
+            diff_score = compareImages(refImages[i], cur_frame);
+            if(diff_score >= max_score) {
+                max_score = diff_score;
+                back_img_index = i;
+            }
+            if(diff_score >= simThresh) {
+                has_foreground = false;
+                break;
+            }
+        }
 
-	if(has_foreground) {
-	    if(pVerbose || pVerbose2) {
-		cv::imshow(CUR_FRAME_WINNAME, cur_frame);
-	    }
-	    string timestamp = millis_to_timestamp(cap.get(cv::CAP_PROP_POS_MSEC));
-	    cout << "Object detected! | max_sim=" << fixed << setprecision(4) << max_score
-		 << " | " << "frame " << cur_frame_number << " (" << timestamp << ")"
-		 << " | " << "ETA " << eta
-		 << endl;
-	    std::ostringstream stringStream;
-	    stringStream << videoPath.stem().string()
-			 << "_f" << cur_frame_number
-			 << "-t" << timestamp
-			 << "-ms" << fixed << setprecision(4) << max_score
-			 << OUT_EXT
-			 << flush;
-	    std::string outName = stringStream.str();
-	    // cout << "Writing to " << outName << endl;
-	    cv::imwrite((outPath / outName).string(), cur_frame);
-	    // waitKey(100);
-	} else if((cur_frame_number % updateProgressRate) == 0) {
-	    cout << "frame " << std::setfill('0') << std::setw(6) << cur_frame_number
-		 << " (" << millis_to_timestamp(cap.get(cv::CAP_PROP_POS_MSEC)) << ")"
-		 << " | " << "max sim = " << max_score
-		 << " | " << "ETA " << eta
-		 << endl;
-	    if(pVerbose || pVerbose2) {
-		cv::imshow(CUR_FRAME_WINNAME, cur_frame);
-		waitKey(100);
-	    }
-	} else if(pVerbose2) {
-		cv::imshow(CUR_FRAME_WINNAME, cur_frame);
-		waitKey(100);
-	}
-	eta.update();
+        if(has_foreground) {
+            if(pVerbose || pVerbose2) {
+                cv::imshow(CUR_FRAME_WINNAME, cur_frame);
+            }
+            string timestamp = millis_to_timestamp(cap.get(cv::CAP_PROP_POS_MSEC));
+            cout << "Object detected! | max_sim=" << fixed << setprecision(4) << max_score
+                 << " | " << "frame " << cur_frame_number << " (" << timestamp << ")"
+                 << " | " << "ETA " << eta
+                 << endl;
+            std::ostringstream stringStream;
+            stringStream << inputPath.stem().string()
+                         << "_f" << cur_frame_number
+                         << "-t" << timestamp
+                         << "-ms" << fixed << setprecision(4) << max_score
+                         << OUT_EXT
+                         << flush;
+            std::string outName = stringStream.str();
+            // cout << "Writing to " << outName << endl;
+            cv::imwrite((outPath / outName).string(), cur_frame);
+            // waitKey(100);
+        } else if((cur_frame_number % updateProgressRate) == 0) {
+            cout << "frame " << std::setfill('0') << std::setw(6) << cur_frame_number
+                 << " (" << millis_to_timestamp(cap.get(cv::CAP_PROP_POS_MSEC)) << ")"
+                 << " | " << "max sim = " << max_score
+                 << " | " << "ETA " << eta
+                 << endl;
+            if(pVerbose || pVerbose2) {
+                cv::imshow(CUR_FRAME_WINNAME, cur_frame);
+                waitKey(100);
+            }
+        } else if(pVerbose2) {
+            cv::imshow(CUR_FRAME_WINNAME, cur_frame);
+            waitKey(100);
+        }
+        eta.update();
     } while((cur_frame_number < endFrame) && read_resized(cap, full_frame, cur_frame));
     return 0;
 }
