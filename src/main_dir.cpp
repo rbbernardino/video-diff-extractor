@@ -11,6 +11,7 @@
 #include "args.hxx"
 #include "SSIM.hpp"
 #include "eta.hpp"
+#include "alphanum.hpp"
 
 using namespace std;
 using namespace cv;
@@ -66,7 +67,7 @@ int main(int argc, char *argv[])
 				"that differs from some reference frames. The "
 				"difference is calculated with a configurable threshold.");
     args::HelpFlag help(parser, "help", "Display this help menu", {'h', "help"});
-    args::ValueFlag<std::string> pInputPath(parser, "videoOrDirecao", "The input video file OR directory", {'i'});
+    args::ValueFlag<std::string> pInputPath(parser, "videoOrDirectory", "The input video file OR directory", {'i'});
     args::ValueFlag<std::string> pReferenceDirPath(parser, "directory", "The reference images dir path", {'r'});
     args::ValueFlag<std::string> pOutDirPath(parser, "directory", "The output directory path", {'o'});
     args::ValueFlag<int> pStartFrame(parser, "start_frame", "Ignores all frames before the specified one", {'s'});
@@ -122,9 +123,9 @@ int main(int argc, char *argv[])
     {
         std::cerr << "ERROR, input path '" << inputPath.string() << "' does not exist" << endl;
         return -1;
-    } else if(!fs::is_regular_file(inputPath) && !fs::is_symlink(inputPath))
+    } else if(!fs::is_directory(inputPath))
     {
-        std::cerr << "ERROR, path '" << inputPath.string() << "' is not a file" << endl;
+        std::cerr << "ERROR, path '" << inputPath.string() << "' is not a directory" << endl;
         return -1;
     }
     
@@ -148,76 +149,62 @@ int main(int argc, char *argv[])
     // copy all paths to a vector and sort them
     cout << "Reading reference images and resizing..." << endl;
     typedef vector<fs::path> pvec;
-    pvec all_paths;
-    copy(fs::directory_iterator(refImagesDirPath), fs::directory_iterator(), back_inserter(all_paths));
-    sort(all_paths.begin(), all_paths.end());
+    pvec refimg_paths;
+    copy(fs::directory_iterator(refImagesDirPath), fs::directory_iterator(), back_inserter(refimg_paths));
+    sort(refimg_paths.begin(), refimg_paths.end());
     fs::path fpath;
-    vector<Mat> refImages(all_paths.size());
-    for (int i = 0; i < all_paths.size(); i++) {
-        cout << "Reference Image " << i << " (" << all_paths[i].filename() << ")\r" << flush;
-        fpath = all_paths[i];
+    vector<Mat> refImages(refimg_paths.size());
+    for (int i = 0; i < refimg_paths.size(); i++) {
+        cout << "Reference Image " << i << " (" << refimg_paths[i].filename() << ")\r" << flush;
+        fpath = refimg_paths[i];
         Mat full_size = cv::imread(fpath.string()); 
         cv::resize(full_size, refImages[i], cv::Size(RSZ_WIDTH, RSZ_HEIGHT), 0, 0, cv::INTER_AREA);
     }
     cout << string(120, ' ') << '\r' << flush;
-    
-    VideoCapture cap;
-    cap.open(inputPath.string());
-    if(!cap.isOpened())
-    {
-        cerr << "ERROR! Unable to open file." << endl;
-        return -1;
-    }
 
-    long frame_count = cap.get(cv::CAP_PROP_FRAME_COUNT);
+    // obtain frames paths
+    cout << "Getting input frames paths..." << endl;
+    pvec input_paths;
+    copy(fs::directory_iterator(inputPath), fs::directory_iterator(), back_inserter(input_paths));
+    sort(input_paths.begin(), input_paths.end(), doj::alphanum_less<std::string>());
+
+    long frame_count = input_paths.size();
     if(frame_count > 0) {
         cout << "Frame count: " << frame_count << endl << endl;
     } else {
-        cout << "Couldn't get frame count from metadata..." << endl;
+        cout << "No frames found!" << endl;
+        exit(1);
     }
 
     if(!pEndFrame) {
         endFrame = frame_count;
-    } else {
-        if(endFrame < startFrame)
-            exit(0);
     }
-
-    if(pStartFrame && startFrame > 1) {
-        cout << "Skipping " << startFrame - 1 << " frames..." << endl;
-        EtaEstimator eta(startFrame);
-        cout << "frame " << 1;
-        for(long i = 1; i < startFrame; i++) {
-            if((i % 300) == 0) {
-                // cout << string(120, ' ') << "\r" << flush;
-                cout << "frame " << i;
-                cout << " | ETA " << eta << "          " <<  "\r" << flush;
-            }
-            cap.grab();
-            eta.update();
-        }
-        cout << string(120, ' ') << "\r" << flush;
-    }
-    
-    Mat full_frame, cur_frame;
 
     if(pVerbose || pVerbose2) {
         cv::namedWindow(CUR_FRAME_WINNAME, cv::WINDOW_NORMAL);
         resizeWindow(CUR_FRAME_WINNAME, 640, 480);
     }
 
-    cout << "Started to process video." << endl;
-    read_resized(cap, full_frame, cur_frame);
+    // --------------------------------------
+    Mat full_frame, cur_frame;
+    full_frame = imread(input_paths[startFrame - 1]);
+    cv::resize(full_frame, cur_frame, cv::Size(RSZ_WIDTH, RSZ_HEIGHT), 0, 0, cv::INTER_AREA);
+
+    cout << "Started to process files." << endl;
     if(pVerbose || pVerbose2)
         cv::imshow(CUR_FRAME_WINNAME, cur_frame);
     waitKey(100);
     EtaEstimator eta(endFrame - startFrame + 1);
     long cur_frame_number;
-    do {
+    for(long i = startFrame-1; i < endFrame; i++)
+    {
+        full_frame = imread(input_paths[i]);
+        cv::resize(full_frame, cur_frame, cv::Size(RSZ_WIDTH, RSZ_HEIGHT), 0, 0, cv::INTER_AREA);
+
         bool has_foreground = true;
         int back_img_index;
         float diff_score, max_score = 0.0;
-        cur_frame_number = cap.get(cv::CAP_PROP_POS_FRAMES);
+        cur_frame_number = i+1;
         for(int i = 0; i < refImages.size(); i++) {
             // the strategy is to compare the input frame with each
             // background reference frame. If any of the background
@@ -240,25 +227,27 @@ int main(int argc, char *argv[])
             if(pVerbose || pVerbose2) {
                 cv::imshow(CUR_FRAME_WINNAME, cur_frame);
             }
-            string timestamp = millis_to_timestamp(cap.get(cv::CAP_PROP_POS_MSEC));
+            // string timestamp = millis_to_timestamp(cap.get(cv::CAP_PROP_POS_MSEC));
             cout << "Object detected! | max_sim=" << fixed << setprecision(4) << max_score
-                 << " | " << "frame " << cur_frame_number << " (" << timestamp << ")"
+                 << " | " << "frame " << cur_frame_number // << " (" << timestamp << ")"
                  << " | " << "ETA " << eta
                  << endl;
-            std::ostringstream stringStream;
-            stringStream << inputPath.stem().string()
-                         << "_f" << cur_frame_number
-                         << "-t" << timestamp
-                         << "-ms" << fixed << setprecision(4) << max_score
-                         << OUT_EXT
-                         << flush;
-            std::string outName = stringStream.str();
+            // std::ostringstream stringStream;
+            // stringStream << inputPath.stem().string()
+            //              << "_f" << cur_frame_number
+            //              << "-t" << timestamp
+            //              << "-ms" << fixed << setprecision(4) << max_score
+            //              << OUT_EXT
+            //              << flush;
+            // std::string outName = stringStream.str();
             // cout << "Writing to " << outName << endl;
-            cv::imwrite((outPath / outName).string(), cur_frame);
+            // cv::imwrite((outPath / outName).string(), cur_frame);
+            fs::path full_out_path = outPath / input_paths[i].filename();
+            cv::imwrite(full_out_path.string(), cur_frame);
             // waitKey(100);
         } else if((cur_frame_number % visualRefreshRate) == 0) {
             cout << "frame " << std::setfill('0') << std::setw(6) << cur_frame_number
-                 << " (" << millis_to_timestamp(cap.get(cv::CAP_PROP_POS_MSEC)) << ")"
+                 // << " (" << millis_to_timestamp(cap.get(cv::CAP_PROP_POS_MSEC)) << ")"
                  << " | " << "max sim = " << max_score
                  << " | " << "ETA " << eta
                  << endl;
@@ -271,6 +260,6 @@ int main(int argc, char *argv[])
             waitKey(100);
         }
         eta.update();
-    } while((cur_frame_number < endFrame) && read_resized(cap, full_frame, cur_frame));
+    }
     return 0;
 }

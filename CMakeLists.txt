@@ -29,3 +29,13 @@ target_link_libraries(
   ${Boost_SYSTEM_LIBRARY}
   stdc++fs
   )
+
+add_custom_target(framesdiff_)
+add_executable(framesdiff src/main_dir.cpp)
+target_link_libraries(
+  framesdiff
+  ${OpenCV_LIBS}
+  ${Boost_SYSTEM_LIBRARY}
+  stdc++fs
+  )
+# add_dependencies(framesdiff freamesdiff_exec)
